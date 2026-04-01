@@ -217,7 +217,7 @@ textarea { font-family: inherit; }
 // ─── Supabase Config ───
 const SUPABASE_URL = 'https://lvdoaekdwocierlzjmsu.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2ZG9hZWtkd29jaWVybHpqbXN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMjM3MzUsImV4cCI6MjA5MDU5OTczNX0.7FpIGeLn5JGXlgWtfLwIuGKdMgaVC9VSGda2NONCd0Y';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Constants ───
 const WORK_TYPES = [
@@ -273,17 +273,17 @@ async function handleAuth(e) {
   if (password.length < 6) { state.authError = 'パスワードは6文字以上にしてください'; render(); return; }
 
   if (state.authMode === 'signup') {
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await db.auth.signUp({ email, password });
     if (error) { state.authError = error.message; render(); }
     else { state.authMsg = '確認メールを送信しました。メール内のリンクをクリックしてください。'; render(); }
   } else {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await db.auth.signInWithPassword({ email, password });
     if (error) { state.authError = 'メールまたはパスワードが正しくありません'; render(); }
   }
 }
 
 async function handleLogout() {
-  await supabase.auth.signOut();
+  await db.auth.signOut();
   state.user = null;
   state.reports = {};
   render();
@@ -321,12 +321,12 @@ async function saveReport(date, hour, workType, memo) {
 
   let result;
   if (existing?.id) {
-    result = await supabase.from('work_reports')
+    result = await db.from('work_reports')
       .update({ work_type: workType, memo, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
       .select().single();
   } else {
-    result = await supabase.from('work_reports')
+    result = await db.from('work_reports')
       .insert({ user_id: state.user.id, report_date: date, hour, work_type: workType, memo })
       .select().single();
   }
@@ -348,7 +348,7 @@ async function deleteReport(date, hour) {
 
   state.syncStatus = 'saving';
   render();
-  const { error } = await supabase.from('work_reports').delete().eq('id', existing.id);
+  const { error } = await db.from('work_reports').delete().eq('id', existing.id);
 
   if (!error) {
     delete state.reports[date][hour];
@@ -602,7 +602,7 @@ function escapeHtml(s) {
 
 // ─── Init ───
 async function init() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await db.auth.getSession();
   if (session?.user) {
     state.user = session.user;
     render();
@@ -613,7 +613,7 @@ async function init() {
     render();
   }
 
-  supabase.auth.onAuthStateChange(async (event, session) => {
+  db.auth.onAuthStateChange(async (event, session) => {
     if (session?.user) {
       state.user = session.user;
       render();
