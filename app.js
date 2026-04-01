@@ -1,5 +1,10 @@
 // ─── Supabase Client ───
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let supabase;
+if (!window.supabase) {
+  console.error('Supabase library not loaded');
+} else {
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
 
 // ─── Constants ───
 const WORK_TYPES = [
