@@ -1,0 +1,5 @@
+// ★★★ ここにSupabaseの情報を入れてください ★★★
+// Supabaseダッシュボード → Settings → API から取得
+
+const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY_HERE';
