@@ -211,17 +211,10 @@ textarea { font-family: inherit; }
 <body>
   <div id="app"></div>
 
-  <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="supabase-config.js"></script>
 
   <script>
-// ─── Supabase Config ───
-const SUPABASE_URL = 'https://lvdoaekdwocierlzjmsu.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx2ZG9hZWtkd29jaWVybHpqbXN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMjM3MzUsImV4cCI6MjA5MDU5OTczNX0.7FpIGeLn5JGXlgWtfLwIuGKdMgaVC9VSGda2NONCd0Y';
-
-// ─── Initialize Supabase ───
-let supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 // ─── Constants ───
 const WORK_TYPES = [
   { id: 'dev',      label: '開発',     icon: '⌨️', color: '#3B82F6' },
@@ -630,7 +623,7 @@ async function init() {
   });
 }
 
-init();
+document.addEventListener('DOMContentLoaded', init);
   </script>
 </body>
 </html>
