@@ -292,9 +292,8 @@ async function handleLogout() {
 }
 
 // ─── Data (Supabase) ───
-async function loadReports() {
-  state.loading = true;
-  render();
+async function loadReports({ silent = false } = {}) {
+  if (!silent) { state.loading = true; render(); }
   const { data, error } = await db
     .from('work_reports')
     .select('*')
@@ -682,7 +681,7 @@ async function init() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.user) {
-    loadReports();
+    loadReports({ silent: true });
   }
 });
 document.addEventListener('DOMContentLoaded', init);
