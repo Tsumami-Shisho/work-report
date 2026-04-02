@@ -86,18 +86,15 @@ textarea { font-family: inherit; }
 .sync-saved { background: #D1FAE5; color: #065F46; }
 .sync-error { background: #FEE2E2; color: #991B1B; }
 
-/* ─── Notification Banner ─── */
-.notif-banner {
-  margin: 16px 20px 0; padding: 14px 16px; background: #FFF9E6;
-  border: 1.5px solid #F5D949; border-radius: 12px;
-  display: flex; align-items: center; gap: 10px;
+/* ─── Interval Toggle ─── */
+.interval-toggle {
+  display: flex; gap: 0; background: #F0F0F0; border-radius: 8px; padding: 3px;
 }
-.notif-banner-text { flex: 1; font-size: 13px; font-weight: 600; color: #92710C; }
-.notif-btn {
-  background: #1a1a1a; color: #fff; border: none; border-radius: 8px;
-  padding: 8px 12px; font-size: 12px; font-weight: 600; white-space: nowrap;
+.interval-btn {
+  padding: 5px 12px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600;
+  background: transparent; color: #999; transition: all 0.15s;
 }
-.notif-close { background: none; border: none; font-size: 16px; color: #999; padding: 4px; }
+.interval-btn.active { background: #fff; color: #1a1a1a; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 
 /* ─── Timeline ─── */
 .timeline { padding: 20px 20px 100px; }
@@ -231,7 +228,16 @@ const WORK_TYPES = [
   { id: 'break',    label: '休憩',     icon: '☕', color: '#6B7280' },
   { id: 'other',    label: 'その他',   icon: '📌', color: '#78716C' },
 ];
-const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+function getSlots() {
+  const slots = [];
+  for (let h = 6; h <= 23; h++) {
+    slots.push({ hour: h, minute: 0, key: `${h}:00` });
+    if (state && state.interval === 30 && h < 23) {
+      slots.push({ hour: h, minute: 30, key: `${h}:30` });
+    }
+  }
+  return slots;
+}
 
 // ─── State ───
 let state = {
@@ -240,13 +246,13 @@ let state = {
   currentDate: todayStr(),
   view: 'input',
   editingHour: null,
+  editingMinute: null,
   syncStatus: 'idle',
   loading: true,
   authMode: 'login',
   authError: '',
   authMsg: '',
-  showNotifBanner: true,
-  showNotifModal: false,
+  interval: parseInt(localStorage.getItem('wr-interval') || '60'),
 };
 
 // ─── Helpers ───
@@ -304,7 +310,8 @@ async function loadReports({ silent = false } = {}) {
     state.reports = {};
     data.forEach(row => {
       if (!state.reports[row.report_date]) state.reports[row.report_date] = {};
-      state.reports[row.report_date][row.hour] = {
+      const key = `${row.hour}:${String(row.minute ?? 0).padStart(2,'0')}`;
+      state.reports[row.report_date][key] = {
         work_type: row.work_type,
         memo: row.memo || '',
         id: row.id,
@@ -315,10 +322,11 @@ async function loadReports({ silent = false } = {}) {
   render();
 }
 
-async function saveReport(date, hour, workType, memo) {
+async function saveReport(date, hour, minute, workType, memo) {
   state.syncStatus = 'saving';
   render();
-  const existing = state.reports[date]?.[hour];
+  const key = `${hour}:${String(minute).padStart(2,'0')}`;
+  const existing = state.reports[date]?.[key];
 
   let result;
   if (existing?.id) {
@@ -328,7 +336,7 @@ async function saveReport(date, hour, workType, memo) {
       .select().single();
   } else {
     result = await db.from('work_reports')
-      .insert({ user_id: state.user.id, report_date: date, hour, work_type: workType, memo })
+      .insert({ user_id: state.user.id, report_date: date, hour, minute, work_type: workType, memo })
       .select().single();
   }
 
@@ -336,15 +344,16 @@ async function saveReport(date, hour, workType, memo) {
     state.syncStatus = 'error';
   } else {
     if (!state.reports[date]) state.reports[date] = {};
-    state.reports[date][hour] = { work_type: workType, memo, id: result.data.id };
+    state.reports[date][key] = { work_type: workType, memo, id: result.data.id };
     state.syncStatus = 'saved';
   }
   render();
   setTimeout(() => { state.syncStatus = 'idle'; render(); }, 1500);
 }
 
-async function deleteReport(date, hour) {
-  const existing = state.reports[date]?.[hour];
+async function deleteReport(date, hour, minute) {
+  const key = `${hour}:${String(minute).padStart(2,'0')}`;
+  const existing = state.reports[date]?.[key];
   if (!existing?.id) return;
 
   state.syncStatus = 'saving';
@@ -352,7 +361,7 @@ async function deleteReport(date, hour) {
   const { error } = await db.from('work_reports').delete().eq('id', existing.id);
 
   if (!error) {
-    delete state.reports[date][hour];
+    delete state.reports[date][key];
     if (Object.keys(state.reports[date]).length === 0) delete state.reports[date];
     state.syncStatus = 'saved';
   } else {
@@ -362,83 +371,11 @@ async function deleteReport(date, hour) {
   setTimeout(() => { state.syncStatus = 'idle'; render(); }, 1500);
 }
 
-// ─── Service Worker ───
-async function registerSW() {
-  if (!('serviceWorker' in navigator)) return null;
-  try {
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    await navigator.serviceWorker.ready;
-    return reg;
-  } catch(e) { return null; }
-}
-
-function swPostMessage(msg) {
-  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
-  navigator.serviceWorker.controller.postMessage(msg);
-}
-
-// ─── Notifications ───
-function scheduleNotifications() {
-  if (Notification.permission !== 'granted') return;
-  swPostMessage({ type: 'SCHEDULE_NOTIFICATIONS' });
-}
-
-async function requestNotifPermission() {
-  if (!('Notification' in window)) return;
-  const result = await Notification.requestPermission();
-  if (result === 'granted') scheduleNotifications();
-  state.showNotifBanner = false;
-  state.showNotifModal = false;
+// ─── Interval ───
+function setInterval60(n) {
+  state.interval = n;
+  localStorage.setItem('wr-interval', n);
   render();
-}
-
-function sendTestNotif() {
-  if (Notification.permission !== 'granted') return;
-  // SW経由で送るとiOSでも確実に届く
-  if (navigator.serviceWorker?.controller) {
-    swPostMessage({ type: 'TEST_NOTIFICATION' });
-  } else {
-    new Notification('作業報告リマインド 📋', {
-      body: 'テスト通知です。通知は正常に動作しています！',
-      tag: 'wr-test'
-    });
-  }
-}
-
-function renderNotifModal() {
-  const supported = 'Notification' in window;
-  const perm = supported ? Notification.permission : 'unsupported';
-  let statusText, statusColor, statusIcon;
-  if (!supported)         { statusText = '通知非対応のブラウザです'; statusColor = '#999';    statusIcon = '❌'; }
-  else if (perm === 'granted') { statusText = '許可済み';                statusColor = '#10B981'; statusIcon = '✅'; }
-  else if (perm === 'denied')  { statusText = '拒否済み';                statusColor = '#EF4444'; statusIcon = '🚫'; }
-  else                         { statusText = '未設定';                  statusColor = '#F59E0B'; statusIcon = '❓'; }
-
-  const actionBtn = !supported ? '' :
-    perm === 'granted' ? `<button class="btn-save" style="width:100%;margin-bottom:10px" onclick="sendTestNotif()">🔔 テスト通知を今すぐ送る</button>` :
-    perm === 'denied'  ? `<div style="font-size:13px;background:#FEE2E2;color:#991B1B;padding:12px;border-radius:10px;margin-bottom:12px">ブラウザの設定から「通知」を「許可」に変更してください。</div>` :
-    `<button class="btn-save" style="width:100%;margin-bottom:10px" onclick="requestNotifPermission()">🔔 通知を許可する</button>`;
-
-  return `
-    <div class="modal-backdrop" onclick="if(event.target===this){state.showNotifModal=false;render()}">
-      <div class="modal-sheet">
-        <div class="modal-handle"></div>
-        <div class="modal-title">通知設定</div>
-        <div style="display:flex;align-items:center;gap:12px;padding:14px;background:#F5F5F5;border-radius:12px;margin-bottom:20px">
-          <span style="font-size:28px">${statusIcon}</span>
-          <div>
-            <div style="font-size:12px;color:#999;margin-bottom:2px">現在の通知状態</div>
-            <div style="font-size:16px;font-weight:700;color:${statusColor}">${statusText}</div>
-          </div>
-        </div>
-        ${actionBtn}
-        <button class="btn-cancel" style="width:100%" onclick="state.showNotifModal=false;render()">閉じる</button>
-        <div style="font-size:12px;color:#bbb;margin-top:16px;line-height:1.7">
-          ※ iPhoneはSafariでホーム画面に追加した状態でのみ通知が届きます（iOS 16.4以降）<br>
-          ※ 通知は毎時0分（9〜17時）にスケジュールされます
-        </div>
-      </div>
-    </div>`;
 }
 
 // ─── Render ───
@@ -477,32 +414,28 @@ function toggleAuthMode() {
 }
 
 function renderMain() {
+  const slots = getSlots();
   const todayReports = state.reports[state.currentDate] || {};
   const filledCount = Object.keys(todayReports).length;
-  const currentHour = new Date().getHours();
-  const pct = (filledCount / HOURS.length) * 100;
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  const pct = (filledCount / slots.length) * 100;
 
   let syncBadge = '';
   if (state.syncStatus === 'saving') syncBadge = '<span class="sync-badge sync-saving">⏳ 保存中…</span>';
   else if (state.syncStatus === 'saved') syncBadge = '<span class="sync-badge sync-saved">☁️ 同期済</span>';
   else if (state.syncStatus === 'error') syncBadge = '<span class="sync-badge sync-error">⚠️ 保存失敗</span>';
 
-  const notifBanner = (state.showNotifBanner && 'Notification' in window && Notification.permission !== 'granted') ? `
-    <div class="notif-banner">
-      <span style="font-size:20px">🔔</span>
-      <div class="notif-banner-text">通知を許可すると1時間ごとにリマインド</div>
-      <button class="notif-btn" onclick="requestNotifPermission()">許可</button>
-      <button class="notif-close" onclick="state.showNotifBanner=false;render()">✕</button>
-    </div>` : '';
-
-  const timeline = HOURS.map(hour => {
-    const entry = todayReports[hour];
-    const isNow = hour === currentHour && state.currentDate === todayStr();
+  const timeline = slots.map(slot => {
+    const entry = todayReports[slot.key];
+    const isNow = slot.hour === currentHour && slot.minute <= currentMinute && state.currentDate === todayStr();
     const type = entry ? getType(entry.work_type) : null;
     const dotClass = `entry-dot${isNow ? ' now' : ''}${entry ? ' filled' : ''}`;
     const cardClass = `entry-card${isNow ? ' now' : ''}${entry ? ' filled' : ''}`;
     const dotStyle = entry && type ? `--dot-color:${type.color}` : '';
     const cardStyle = entry && type ? `--card-color:${type.color}` : '';
+    const label = `${slot.hour}:${String(slot.minute).padStart(2,'0')}`;
 
     const content = entry
       ? `<span class="icon">${type?.icon}</span>
@@ -515,16 +448,15 @@ function renderMain() {
     return `
       <div class="entry-row">
         <div class="entry-time">
-          <span class="entry-hour${isNow ? ' now' : ''}">${hour}:00</span>
+          <span class="entry-hour${isNow ? ' now' : ''}">${label}</span>
           <div class="${dotClass}" style="${dotStyle}"></div>
           <div class="entry-line"></div>
         </div>
-        <button class="${cardClass}" style="${cardStyle}" onclick="openModal(${hour})">${content}</button>
+        <button class="${cardClass}" style="${cardStyle}" onclick="openModal(${slot.hour},${slot.minute})">${content}</button>
       </div>`;
   }).join('');
 
-  const modal = state.editingHour !== null ? renderModal(state.editingHour, todayReports[state.editingHour]) : '';
-  const notifModal = state.showNotifModal ? renderNotifModal() : '';
+  const modal = state.editingHour !== null ? renderModal(state.editingHour, state.editingMinute, todayReports[`${state.editingHour}:${String(state.editingMinute).padStart(2,'0')}`]) : '';
 
   return `
     <div class="header">
@@ -534,23 +466,26 @@ function renderMain() {
         </div>
         <div class="header-actions">
           <button class="btn-logout" onclick="loadReports()" title="更新">🔄</button>
-          <button class="btn-logout" onclick="state.showNotifModal=true;render()" title="通知設定">${'Notification' in window && Notification.permission === 'granted' ? '🔔' : '🔕'}</button>
           <button class="btn-logout" onclick="handleLogout()" title="ログアウト">↩</button>
         </div>
       </div>
       <div class="header-sub-row">
-        <div class="header-sub">${formatDate(state.currentDate)}・${filledCount}/${HOURS.length} 記録済</div>
+        <div class="header-sub">${formatDate(state.currentDate)}・${filledCount}/${slots.length} 記録済</div>
         <button class="btn-summary" onclick="state.view='summary';render()">📊 サマリー</button>
       </div>
-      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <div class="progress-bar" style="flex:1;margin-top:0;margin-right:12px"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="interval-toggle">
+          <button class="interval-btn${state.interval === 60 ? ' active' : ''}" onclick="setInterval60(60)">1時間</button>
+          <button class="interval-btn${state.interval === 30 ? ' active' : ''}" onclick="setInterval60(30)">30分</button>
+        </div>
+      </div>
     </div>
-    ${notifBanner}
     ${state.loading ? '<div class="loading">読み込み中...</div>' : `<div class="timeline">${timeline}</div>`}
-    ${modal}
-    ${notifModal}`;
+    ${modal}`;
 }
 
-function renderModal(hour, entry) {
+function renderModal(hour, minute, entry) {
   const typeGrid = WORK_TYPES.map(t => {
     const selected = state._modalType === t.id;
     return `<button class="type-btn${selected ? ' selected' : ''}"
@@ -562,21 +497,22 @@ function renderModal(hour, entry) {
   }).join('');
 
   const memoVal = state._modalMemo ?? '';
-  const deleteBtn = entry ? `<button class="btn-delete" onclick="deleteAndClose(${hour})">削除</button>` : '';
+  const timeLabel = `${hour}:${String(minute).padStart(2,'0')}`;
+  const deleteBtn = entry ? `<button class="btn-delete" onclick="deleteAndClose(${hour},${minute})">削除</button>` : '';
   const canSave = !!state._modalType;
 
   return `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
         <div class="modal-handle"></div>
-        <div class="modal-title">${hour}:00 の作業記録</div>
+        <div class="modal-title">${timeLabel} の作業記録</div>
         <div class="type-grid">${typeGrid}</div>
         <textarea class="memo-input" rows="2" placeholder="一言メモ（任意）"
           oninput="state._modalMemo=this.value">${escapeHtml(memoVal)}</textarea>
         <div class="modal-actions">
           ${deleteBtn}
           <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
-          <button class="btn-save" ${canSave ? '' : 'disabled'} onclick="saveAndClose(${hour})">保存</button>
+          <button class="btn-save" ${canSave ? '' : 'disabled'} onclick="saveAndClose(${hour},${minute})">保存</button>
         </div>
       </div>
     </div>`;
@@ -593,7 +529,11 @@ function renderSummary() {
         const counts = {};
         entries.forEach(e => { counts[e.work_type] = (counts[e.work_type] || 0) + 1; });
         const total = entries.length;
-        const sortedHours = Object.keys(dr).map(Number).sort((a,b) => a-b);
+        const sortedKeys = Object.keys(dr).sort((a,b) => {
+          const [ah,am] = a.split(':').map(Number);
+          const [bh,bm] = b.split(':').map(Number);
+          return (ah*60+am) - (bh*60+bm);
+        });
 
         const bar = Object.entries(counts).map(([tid, cnt]) => {
           const t = getType(tid);
@@ -605,10 +545,10 @@ function renderSummary() {
           return `<span class="category-tag" style="background:${t?.color}15;color:${t?.color}">${t?.icon} ${t?.label} ×${cnt}</span>`;
         }).join('');
 
-        const rows = sortedHours.map(hour => {
-          const e = dr[hour]; const t = getType(e.work_type);
+        const rows = sortedKeys.map(key => {
+          const e = dr[key]; const t = getType(e.work_type);
           return `<div class="detail-row">
-            <span class="detail-hour">${hour}:00</span>
+            <span class="detail-hour">${key}</span>
             <span class="detail-icon">${t?.icon}</span>
             <span class="detail-label">${t?.label}</span>
             <span class="detail-memo">${e.memo ? escapeHtml(e.memo) : '—'}</span>
@@ -635,26 +575,29 @@ function renderSummary() {
 }
 
 // ─── Modal helpers ───
-function openModal(hour) {
-  const entry = (state.reports[state.currentDate] || {})[hour];
+function openModal(hour, minute) {
+  const key = `${hour}:${String(minute).padStart(2,'0')}`;
+  const entry = (state.reports[state.currentDate] || {})[key];
   state.editingHour = hour;
+  state.editingMinute = minute;
   state._modalType = entry?.work_type || '';
   state._modalMemo = entry?.memo || '';
   render();
 }
 function closeModal() {
   state.editingHour = null;
+  state.editingMinute = null;
   state._modalType = '';
   state._modalMemo = '';
   render();
 }
-async function saveAndClose(hour) {
+async function saveAndClose(hour, minute) {
   if (!state._modalType) return;
-  await saveReport(state.currentDate, hour, state._modalType, state._modalMemo);
+  await saveReport(state.currentDate, hour, minute, state._modalType, state._modalMemo);
   closeModal();
 }
-async function deleteAndClose(hour) {
-  await deleteReport(state.currentDate, hour);
+async function deleteAndClose(hour, minute) {
+  await deleteReport(state.currentDate, hour, minute);
   closeModal();
 }
 
@@ -664,14 +607,11 @@ function escapeHtml(s) {
 
 // ─── Init ───
 async function init() {
-  await registerSW();
-
   const { data: { session } } = await db.auth.getSession();
   if (session?.user) {
     state.user = session.user;
     render();
     await loadReports();
-    scheduleNotifications();
   } else {
     state.loading = false;
     render();
@@ -682,7 +622,6 @@ async function init() {
       state.user = session.user;
       render();
       await loadReports();
-      scheduleNotifications();
     } else {
       state.user = null;
       state.reports = {};
@@ -694,7 +633,6 @@ async function init() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.user) {
     loadReports({ silent: true });
-    scheduleNotifications(); // 日をまたいだ場合などに再スケジュール
   }
 });
 document.addEventListener('DOMContentLoaded', init);
