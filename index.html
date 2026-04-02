@@ -362,37 +362,47 @@ async function deleteReport(date, hour) {
   setTimeout(() => { state.syncStatus = 'idle'; render(); }, 1500);
 }
 
+// ─── Service Worker ───
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    return reg;
+  } catch(e) { return null; }
+}
+
+function swPostMessage(msg) {
+  if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+  navigator.serviceWorker.controller.postMessage(msg);
+}
+
 // ─── Notifications ───
 function scheduleNotifications() {
   if (Notification.permission !== 'granted') return;
-  const now = new Date();
-  HOURS.forEach(hour => {
-    const target = new Date(); target.setHours(hour, 0, 0, 0);
-    const diff = target - now;
-    if (diff > 0) {
-      setTimeout(() => {
-        new Notification('作業報告リマインド 📋', { body: `${hour}:00 の作業内容を記録しましょう`, tag: `wr-${hour}` });
-      }, diff);
-    }
-  });
+  swPostMessage({ type: 'SCHEDULE_NOTIFICATIONS' });
 }
 
 async function requestNotifPermission() {
-  if ('Notification' in window) {
-    const result = await Notification.requestPermission();
-    if (result === 'granted') scheduleNotifications();
-    state.showNotifBanner = false;
-    state.showNotifModal = false;
-    render();
-  }
+  if (!('Notification' in window)) return;
+  const result = await Notification.requestPermission();
+  if (result === 'granted') scheduleNotifications();
+  state.showNotifBanner = false;
+  state.showNotifModal = false;
+  render();
 }
 
 function sendTestNotif() {
   if (Notification.permission !== 'granted') return;
-  new Notification('作業報告リマインド 📋', {
-    body: 'テスト通知です。通知は正常に動作しています！',
-    tag: 'wr-test'
-  });
+  // SW経由で送るとiOSでも確実に届く
+  if (navigator.serviceWorker?.controller) {
+    swPostMessage({ type: 'TEST_NOTIFICATION' });
+  } else {
+    new Notification('作業報告リマインド 📋', {
+      body: 'テスト通知です。通知は正常に動作しています！',
+      tag: 'wr-test'
+    });
+  }
 }
 
 function renderNotifModal() {
@@ -654,6 +664,8 @@ function escapeHtml(s) {
 
 // ─── Init ───
 async function init() {
+  await registerSW();
+
   const { data: { session } } = await db.auth.getSession();
   if (session?.user) {
     state.user = session.user;
@@ -682,6 +694,7 @@ async function init() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && state.user) {
     loadReports({ silent: true });
+    scheduleNotifications(); // 日をまたいだ場合などに再スケジュール
   }
 });
 document.addEventListener('DOMContentLoaded', init);
