@@ -293,7 +293,7 @@ async function handleLogout() {
 async function loadReports() {
   state.loading = true;
   render();
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('work_reports')
     .select('*')
     .eq('user_id', state.user.id)
