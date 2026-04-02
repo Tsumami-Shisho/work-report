@@ -59,16 +59,17 @@ textarea { font-family: inherit; }
 }
 .header-top { display: flex; justify-content: space-between; align-items: center; }
 .header-left h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; display: flex; align-items: center; gap: 10px; }
-.header-sub { font-size: 13px; color: #999; margin-top: 4px; }
-.header-actions { display: flex; gap: 8px; align-items: center; }
+.header-sub-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+.header-sub { font-size: 13px; color: #999; }
+.header-actions { display: flex; gap: 6px; align-items: center; }
 .btn-summary {
-  background: #1a1a1a; color: #fff; border: none; border-radius: 10px;
-  padding: 10px 16px; font-size: 13px; font-weight: 600;
-  display: flex; align-items: center; gap: 6px;
+  background: #1a1a1a; color: #fff; border: none; border-radius: 8px;
+  padding: 7px 12px; font-size: 12px; font-weight: 600;
+  display: flex; align-items: center; gap: 4px; white-space: nowrap;
 }
 .btn-logout {
   background: none; border: 1px solid #ddd; border-radius: 10px;
-  padding: 10px 12px; font-size: 13px; color: #999;
+  padding: 9px 11px; font-size: 13px; color: #999;
 }
 .progress-bar { margin-top: 14px; height: 4px; background: #F0F0F0; border-radius: 2px; overflow: hidden; }
 .progress-fill {
@@ -521,14 +522,16 @@ function renderMain() {
       <div class="header-top">
         <div class="header-left">
           <h1>作業メモ ${syncBadge}</h1>
-          <div class="header-sub">${formatDate(state.currentDate)}・${filledCount}/${HOURS.length} 記録済</div>
         </div>
         <div class="header-actions">
-          <button class="btn-summary" onclick="state.view='summary';render()">📊 サマリー</button>
           <button class="btn-logout" onclick="loadReports()" title="更新">🔄</button>
           <button class="btn-logout" onclick="state.showNotifModal=true;render()" title="通知設定">${'Notification' in window && Notification.permission === 'granted' ? '🔔' : '🔕'}</button>
-          <button class="btn-logout" onclick="handleLogout()">↩</button>
+          <button class="btn-logout" onclick="handleLogout()" title="ログアウト">↩</button>
         </div>
+      </div>
+      <div class="header-sub-row">
+        <div class="header-sub">${formatDate(state.currentDate)}・${filledCount}/${HOURS.length} 記録済</div>
+        <button class="btn-summary" onclick="state.view='summary';render()">📊 サマリー</button>
       </div>
       <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
     </div>
