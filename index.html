@@ -245,6 +245,7 @@ let state = {
   authError: '',
   authMsg: '',
   showNotifBanner: true,
+  showNotifModal: false,
 };
 
 // ─── Helpers ───
@@ -381,8 +382,53 @@ async function requestNotifPermission() {
     const result = await Notification.requestPermission();
     if (result === 'granted') scheduleNotifications();
     state.showNotifBanner = false;
+    state.showNotifModal = false;
     render();
   }
+}
+
+function sendTestNotif() {
+  if (Notification.permission !== 'granted') return;
+  new Notification('作業報告リマインド 📋', {
+    body: 'テスト通知です。通知は正常に動作しています！',
+    tag: 'wr-test'
+  });
+}
+
+function renderNotifModal() {
+  const supported = 'Notification' in window;
+  const perm = supported ? Notification.permission : 'unsupported';
+  let statusText, statusColor, statusIcon;
+  if (!supported)         { statusText = '通知非対応のブラウザです'; statusColor = '#999';    statusIcon = '❌'; }
+  else if (perm === 'granted') { statusText = '許可済み';                statusColor = '#10B981'; statusIcon = '✅'; }
+  else if (perm === 'denied')  { statusText = '拒否済み';                statusColor = '#EF4444'; statusIcon = '🚫'; }
+  else                         { statusText = '未設定';                  statusColor = '#F59E0B'; statusIcon = '❓'; }
+
+  const actionBtn = !supported ? '' :
+    perm === 'granted' ? `<button class="btn-save" style="width:100%;margin-bottom:10px" onclick="sendTestNotif()">🔔 テスト通知を今すぐ送る</button>` :
+    perm === 'denied'  ? `<div style="font-size:13px;background:#FEE2E2;color:#991B1B;padding:12px;border-radius:10px;margin-bottom:12px">ブラウザの設定から「通知」を「許可」に変更してください。</div>` :
+    `<button class="btn-save" style="width:100%;margin-bottom:10px" onclick="requestNotifPermission()">🔔 通知を許可する</button>`;
+
+  return `
+    <div class="modal-backdrop" onclick="if(event.target===this){state.showNotifModal=false;render()}">
+      <div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-title">通知設定</div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px;background:#F5F5F5;border-radius:12px;margin-bottom:20px">
+          <span style="font-size:28px">${statusIcon}</span>
+          <div>
+            <div style="font-size:12px;color:#999;margin-bottom:2px">現在の通知状態</div>
+            <div style="font-size:16px;font-weight:700;color:${statusColor}">${statusText}</div>
+          </div>
+        </div>
+        ${actionBtn}
+        <button class="btn-cancel" style="width:100%" onclick="state.showNotifModal=false;render()">閉じる</button>
+        <div style="font-size:12px;color:#bbb;margin-top:16px;line-height:1.7">
+          ※ iPhoneはSafariでホーム画面に追加した状態でのみ通知が届きます（iOS 16.4以降）<br>
+          ※ 通知は毎時0分（9〜17時）にスケジュールされます
+        </div>
+      </div>
+    </div>`;
 }
 
 // ─── Render ───
@@ -468,6 +514,7 @@ function renderMain() {
   }).join('');
 
   const modal = state.editingHour !== null ? renderModal(state.editingHour, todayReports[state.editingHour]) : '';
+  const notifModal = state.showNotifModal ? renderNotifModal() : '';
 
   return `
     <div class="header">
@@ -479,6 +526,7 @@ function renderMain() {
         <div class="header-actions">
           <button class="btn-summary" onclick="state.view='summary';render()">📊 サマリー</button>
           <button class="btn-logout" onclick="loadReports()" title="更新">🔄</button>
+          <button class="btn-logout" onclick="state.showNotifModal=true;render()" title="通知設定">${'Notification' in window && Notification.permission === 'granted' ? '🔔' : '🔕'}</button>
           <button class="btn-logout" onclick="handleLogout()">↩</button>
         </div>
       </div>
@@ -486,7 +534,8 @@ function renderMain() {
     </div>
     ${notifBanner}
     ${state.loading ? '<div class="loading">読み込み中...</div>' : `<div class="timeline">${timeline}</div>`}
-    ${modal}`;
+    ${modal}
+    ${notifModal}`;
 }
 
 function renderModal(hour, entry) {
