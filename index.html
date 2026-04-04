@@ -187,6 +187,33 @@ textarea { font-family: inherit; }
 .detail-icon { font-size: 16px; }
 .detail-label { font-size: 13px; font-weight: 600; min-width: 56px; }
 .detail-memo { font-size: 13px; color: #888; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-mood { font-size: 14px; flex-shrink: 0; }
+
+/* ─── Mood Selector ─── */
+.mood-section { margin-bottom: 20px; }
+.mood-section-label { font-size: 13px; font-weight: 600; color: #666; margin-bottom: 10px; }
+.mood-row { display: flex; gap: 6px; }
+.mood-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 4px; border-radius: 12px; border: 2px solid transparent;
+  background: #F5F5F5; transition: all 0.15s; font-family: inherit;
+}
+.mood-btn.selected { background: #FFFBEB; border-color: #F59E0B; }
+.mood-emoji { font-size: 22px; line-height: 1; }
+.mood-name { font-size: 10px; color: #999; font-weight: 500; }
+.mood-btn.selected .mood-name { color: #B45309; font-weight: 700; }
+
+/* ─── Niko Calendar ─── */
+.niko-card { background: #fff; border-radius: 16px; padding: 20px; margin-bottom: 16px; border: 1px solid #eee; }
+.niko-card-title { font-size: 14px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 6px; }
+.niko-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.niko-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px; border-radius: 8px; }
+.niko-cell.today { background: #F0F9FF; }
+.niko-date-label { font-size: 9px; color: #bbb; font-family: 'JetBrains Mono', monospace; }
+.niko-date-label.today-label { color: #0369A1; font-weight: 700; }
+.niko-face { font-size: 20px; line-height: 1; }
+.niko-face-empty { width: 20px; height: 20px; border-radius: 50%; background: #F0F0F0; }
+.entry-mood { font-size: 14px; line-height: 1; }
 
 .empty-state { text-align: center; padding: 60px 20px; color: #999; }
 .empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
@@ -218,6 +245,13 @@ const SUPABASE_ANON_KEY = '__SUPABASE_KEY__';
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ─── Constants ───
+const MOOD_LEVELS = [
+  { value: 5, emoji: '😄', label: '最高' },
+  { value: 4, emoji: '🙂', label: '良い' },
+  { value: 3, emoji: '😐', label: '普通' },
+  { value: 2, emoji: '😟', label: '微妙' },
+  { value: 1, emoji: '😢', label: 'つらい' },
+];
 const WORK_TYPES = [
   { id: 'dev',      label: '開発',     icon: '⌨️', color: '#3B82F6' },
   { id: 'meeting',  label: '会議',     icon: '🗣️', color: '#8B5CF6' },
@@ -253,6 +287,7 @@ let state = {
   authError: '',
   authMsg: '',
   interval: parseInt(localStorage.getItem('wr-interval') || '60'),
+  _modalMood: null,
 };
 
 // ─── Helpers ───
@@ -314,6 +349,7 @@ async function loadReports({ silent = false } = {}) {
       state.reports[row.report_date][key] = {
         work_type: row.work_type,
         memo: row.memo || '',
+        mood: row.mood ?? null,
         id: row.id,
       };
     });
@@ -322,7 +358,7 @@ async function loadReports({ silent = false } = {}) {
   render();
 }
 
-async function saveReport(date, hour, minute, workType, memo) {
+async function saveReport(date, hour, minute, workType, memo, mood) {
   state.syncStatus = 'saving';
   render();
   const key = `${hour}:${String(minute).padStart(2,'0')}`;
@@ -331,12 +367,12 @@ async function saveReport(date, hour, minute, workType, memo) {
   let result;
   if (existing?.id) {
     result = await db.from('work_reports')
-      .update({ work_type: workType, memo, updated_at: new Date().toISOString() })
+      .update({ work_type: workType, memo, mood: mood ?? null, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
       .select().single();
   } else {
     result = await db.from('work_reports')
-      .insert({ user_id: state.user.id, report_date: date, hour, minute, work_type: workType, memo })
+      .insert({ user_id: state.user.id, report_date: date, hour, minute, work_type: workType, memo, mood: mood ?? null })
       .select().single();
   }
 
@@ -344,7 +380,7 @@ async function saveReport(date, hour, minute, workType, memo) {
     state.syncStatus = 'error';
   } else {
     if (!state.reports[date]) state.reports[date] = {};
-    state.reports[date][key] = { work_type: workType, memo, id: result.data.id };
+    state.reports[date][key] = { work_type: workType, memo, mood: mood ?? null, id: result.data.id };
     state.syncStatus = 'saved';
   }
   render();
@@ -437,12 +473,14 @@ function renderMain() {
     const cardStyle = entry && type ? `--card-color:${type.color}` : '';
     const label = `${slot.hour}:${String(slot.minute).padStart(2,'0')}`;
 
+    const entryMoodEmoji = entry?.mood ? MOOD_LEVELS.find(m => m.value === entry.mood)?.emoji : null;
     const content = entry
       ? `<span class="icon">${type?.icon}</span>
          <div style="flex:1;min-width:0">
            <div class="label">${type?.label}</div>
            ${entry.memo ? `<div class="memo">${escapeHtml(entry.memo)}</div>` : ''}
-         </div>`
+         </div>
+         ${entryMoodEmoji ? `<span class="entry-mood">${entryMoodEmoji}</span>` : ''}`
       : `<span class="placeholder">${isNow ? '⏎ タップして記録' : 'タップして記録'}</span>`;
 
     return `
@@ -501,6 +539,14 @@ function renderModal(hour, minute, entry) {
   const deleteBtn = entry ? `<button class="btn-delete" onclick="deleteAndClose(${hour},${minute})">削除</button>` : '';
   const canSave = !!state._modalType;
 
+  const moodBtns = MOOD_LEVELS.map(m => {
+    const selected = state._modalMood === m.value;
+    return `<button class="mood-btn${selected ? ' selected' : ''}" onclick="state._modalMood=${selected ? 'null' : m.value};render()">
+      <span class="mood-emoji">${m.emoji}</span>
+      <span class="mood-name">${m.label}</span>
+    </button>`;
+  }).join('');
+
   return `
     <div class="modal-backdrop" onclick="if(event.target===this)closeModal()">
       <div class="modal-sheet">
@@ -509,6 +555,10 @@ function renderModal(hour, minute, entry) {
         <div class="type-grid">${typeGrid}</div>
         <textarea class="memo-input" rows="2" placeholder="一言メモ（任意）"
           oninput="state._modalMemo=this.value">${escapeHtml(memoVal)}</textarea>
+        <div class="mood-section">
+          <div class="mood-section-label">今の気分</div>
+          <div class="mood-row">${moodBtns}</div>
+        </div>
         <div class="modal-actions">
           ${deleteBtn}
           <button class="btn-cancel" onclick="closeModal()">キャンセル</button>
@@ -516,6 +566,38 @@ function renderModal(hour, minute, entry) {
         </div>
       </div>
     </div>`;
+}
+
+function getDayMoodEmoji(date) {
+  const dr = state.reports[date] || {};
+  const moods = Object.values(dr).map(e => e.mood).filter(m => m != null);
+  if (moods.length === 0) return null;
+  const avg = Math.round(moods.reduce((a, b) => a + b, 0) / moods.length);
+  return MOOD_LEVELS.find(m => m.value === avg)?.emoji || null;
+}
+
+function renderNikoCalendar() {
+  const today = new Date();
+  const cells = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const isToday = dateStr === todayStr();
+    const moodEmoji = getDayMoodEmoji(dateStr);
+    const dayLabel = `${d.getMonth()+1}/${d.getDate()}`;
+    cells.push(`
+      <div class="niko-cell${isToday ? ' today' : ''}">
+        <span class="niko-date-label${isToday ? ' today-label' : ''}">${dayLabel}</span>
+        ${moodEmoji
+          ? `<span class="niko-face">${moodEmoji}</span>`
+          : `<div class="niko-face-empty"></div>`}
+      </div>`);
+  }
+  return `<div class="niko-card">
+    <div class="niko-card-title">😊 ニコニコカレンダー <span style="font-size:11px;font-weight:400;color:#999">（直近14日）</span></div>
+    <div class="niko-grid">${cells.join('')}</div>
+  </div>`;
 }
 
 function renderSummary() {
@@ -545,18 +627,27 @@ function renderSummary() {
           return `<span class="category-tag" style="background:${t?.color}15;color:${t?.color}">${t?.icon} ${t?.label} ×${cnt}</span>`;
         }).join('');
 
+        const dayMood = getDayMoodEmoji(date);
         const rows = sortedKeys.map(key => {
           const e = dr[key]; const t = getType(e.work_type);
+          const moodEmoji = e.mood ? MOOD_LEVELS.find(m => m.value === e.mood)?.emoji : null;
           return `<div class="detail-row">
             <span class="detail-hour">${key}</span>
             <span class="detail-icon">${t?.icon}</span>
             <span class="detail-label">${t?.label}</span>
             <span class="detail-memo">${e.memo ? escapeHtml(e.memo) : '—'}</span>
+            ${moodEmoji ? `<span class="detail-mood">${moodEmoji}</span>` : ''}
           </div>`;
         }).join('');
 
         return `<div class="day-card">
-          <div class="day-header"><h3>${formatDate(date)}</h3><span class="day-count">${total}件記録</span></div>
+          <div class="day-header">
+            <h3>${formatDate(date)}</h3>
+            <div style="display:flex;align-items:center;gap:8px">
+              ${dayMood ? `<span style="font-size:20px" title="その日の平均気分">${dayMood}</span>` : ''}
+              <span class="day-count">${total}件記録</span>
+            </div>
+          </div>
           <div class="category-bar">${bar}</div>
           <div class="category-tags">${tags}</div>
           <div class="detail-table">${rows}</div>
@@ -570,7 +661,7 @@ function renderSummary() {
       <button class="btn-refresh" onclick="loadReports()">🔄 更新</button>
     </div>
     <div class="summary-content">
-      ${state.loading ? '<div class="loading">読み込み中...</div>' : cards}
+      ${state.loading ? '<div class="loading">読み込み中...</div>' : renderNikoCalendar() + cards}
     </div>`;
 }
 
@@ -582,6 +673,7 @@ function openModal(hour, minute) {
   state.editingMinute = minute;
   state._modalType = entry?.work_type || '';
   state._modalMemo = entry?.memo || '';
+  state._modalMood = entry?.mood ?? null;
   render();
 }
 function closeModal() {
@@ -589,11 +681,12 @@ function closeModal() {
   state.editingMinute = null;
   state._modalType = '';
   state._modalMemo = '';
+  state._modalMood = null;
   render();
 }
 async function saveAndClose(hour, minute) {
   if (!state._modalType) return;
-  await saveReport(state.currentDate, hour, minute, state._modalType, state._modalMemo);
+  await saveReport(state.currentDate, hour, minute, state._modalType, state._modalMemo, state._modalMood);
   closeModal();
 }
 async function deleteAndClose(hour, minute) {
