@@ -203,6 +203,19 @@ textarea { font-family: inherit; }
 .mood-name { font-size: 10px; color: #999; font-weight: 500; }
 .mood-btn.selected .mood-name { color: #B45309; font-weight: 700; }
 
+/* ─── Highlight ─── */
+.highlight-btn {
+  width: 100%; padding: 12px; border-radius: 12px;
+  border: 1.5px dashed #e0e0e0; background: transparent;
+  font-size: 14px; font-weight: 600; color: #bbb;
+  margin-bottom: 20px; transition: all 0.2s; font-family: inherit;
+}
+.highlight-btn.active {
+  background: #FFFBEB; border: 1.5px solid #F59E0B; color: #B45309;
+}
+.entry-highlight { font-size: 13px; line-height: 1; }
+.detail-highlight { font-size: 13px; flex-shrink: 0; }
+
 /* ─── Niko Calendar ─── */
 .niko-card { background: #fff; border-radius: 16px; padding: 20px; margin-bottom: 16px; border: 1px solid #eee; }
 .niko-card-title { font-size: 14px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 6px; }
@@ -288,6 +301,7 @@ let state = {
   authMsg: '',
   interval: parseInt(localStorage.getItem('wr-interval') || '60'),
   _modalMood: null,
+  _modalHighlight: false,
 };
 
 // ─── Helpers ───
@@ -350,6 +364,7 @@ async function loadReports({ silent = false } = {}) {
         work_type: row.work_type,
         memo: row.memo || '',
         mood: row.mood ?? null,
+        highlight: row.highlight ?? false,
         id: row.id,
       };
     });
@@ -358,7 +373,7 @@ async function loadReports({ silent = false } = {}) {
   render();
 }
 
-async function saveReport(date, hour, minute, workType, memo, mood) {
+async function saveReport(date, hour, minute, workType, memo, mood, highlight) {
   state.syncStatus = 'saving';
   render();
   const key = `${hour}:${String(minute).padStart(2,'0')}`;
@@ -367,12 +382,12 @@ async function saveReport(date, hour, minute, workType, memo, mood) {
   let result;
   if (existing?.id) {
     result = await db.from('work_reports')
-      .update({ work_type: workType, memo, mood: mood ?? null, updated_at: new Date().toISOString() })
+      .update({ work_type: workType, memo, mood: mood ?? null, highlight: highlight ?? false, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
       .select().single();
   } else {
     result = await db.from('work_reports')
-      .insert({ user_id: state.user.id, report_date: date, hour, minute, work_type: workType, memo, mood: mood ?? null })
+      .insert({ user_id: state.user.id, report_date: date, hour, minute, work_type: workType, memo, mood: mood ?? null, highlight: highlight ?? false })
       .select().single();
   }
 
@@ -380,7 +395,7 @@ async function saveReport(date, hour, minute, workType, memo, mood) {
     state.syncStatus = 'error';
   } else {
     if (!state.reports[date]) state.reports[date] = {};
-    state.reports[date][key] = { work_type: workType, memo, mood: mood ?? null, id: result.data.id };
+    state.reports[date][key] = { work_type: workType, memo, mood: mood ?? null, highlight: highlight ?? false, id: result.data.id };
     state.syncStatus = 'saved';
   }
   render();
@@ -480,7 +495,8 @@ function renderMain() {
            <div class="label">${type?.label}</div>
            ${entry.memo ? `<div class="memo">${escapeHtml(entry.memo)}</div>` : ''}
          </div>
-         ${entryMoodEmoji ? `<span class="entry-mood">${entryMoodEmoji}</span>` : ''}`
+         ${entryMoodEmoji ? `<span class="entry-mood">${entryMoodEmoji}</span>` : ''}
+         ${entry.highlight ? `<span class="entry-highlight">⭐</span>` : ''}`
       : `<span class="placeholder">${isNow ? '⏎ タップして記録' : 'タップして記録'}</span>`;
 
     return `
@@ -555,6 +571,10 @@ function renderModal(hour, minute, entry) {
         <div class="type-grid">${typeGrid}</div>
         <textarea class="memo-input" rows="2" placeholder="一言メモ（任意）"
           oninput="state._modalMemo=this.value">${escapeHtml(memoVal)}</textarea>
+        <button class="highlight-btn${state._modalHighlight ? ' active' : ''}"
+          onclick="state._modalHighlight=!state._modalHighlight;render()">
+          ${state._modalHighlight ? '⭐ ハイライト中（今週よかった！）' : '☆ よかった！とマーク'}
+        </button>
         <div class="mood-section">
           <div class="mood-section-label">今の気分</div>
           <div class="mood-row">${moodBtns}</div>
@@ -637,6 +657,7 @@ function renderSummary() {
             <span class="detail-label">${t?.label}</span>
             <span class="detail-memo">${e.memo ? escapeHtml(e.memo) : '—'}</span>
             ${moodEmoji ? `<span class="detail-mood">${moodEmoji}</span>` : ''}
+            ${e.highlight ? `<span class="detail-highlight">⭐</span>` : ''}
           </div>`;
         }).join('');
 
@@ -674,6 +695,7 @@ function openModal(hour, minute) {
   state._modalType = entry?.work_type || '';
   state._modalMemo = entry?.memo || '';
   state._modalMood = entry?.mood ?? null;
+  state._modalHighlight = entry?.highlight ?? false;
   render();
 }
 function closeModal() {
@@ -682,11 +704,12 @@ function closeModal() {
   state._modalType = '';
   state._modalMemo = '';
   state._modalMood = null;
+  state._modalHighlight = false;
   render();
 }
 async function saveAndClose(hour, minute) {
   if (!state._modalType) return;
-  await saveReport(state.currentDate, hour, minute, state._modalType, state._modalMemo, state._modalMood);
+  await saveReport(state.currentDate, hour, minute, state._modalType, state._modalMemo, state._modalMood, state._modalHighlight);
   closeModal();
 }
 async function deleteAndClose(hour, minute) {
