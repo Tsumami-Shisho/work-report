@@ -4,3 +4,4 @@ node_modules/
 supabase-config.js
 
 
+.vercel
