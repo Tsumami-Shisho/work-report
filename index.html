@@ -240,6 +240,27 @@ textarea { font-family: inherit; }
 }
 @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
 
+/* ─── Resume Area ─── */
+.resume-area {
+  margin: 12px 20px 0; padding: 14px 16px; border-radius: 14px;
+  background: #fff; border: 1px solid #eee;
+  animation: fadeIn 0.2s ease;
+}
+.resume-area.evening {
+  background: #FFFBF0; border-color: #F5E6C8;
+}
+.resume-msg { font-size: 14px; color: #555; line-height: 1.5; margin-bottom: 4px; }
+.resume-sub { font-size: 12px; color: #aaa; margin-bottom: 12px; }
+.resume-cta {
+  display: inline-block; padding: 10px 20px; border-radius: 10px;
+  background: #1a1a1a; color: #fff; font-size: 14px; font-weight: 600;
+  border: none; font-family: inherit; cursor: pointer; transition: opacity 0.15s;
+}
+.resume-cta:active { opacity: 0.8; }
+.resume-cta.soft {
+  background: transparent; color: #555; border: 1.5px solid #ddd;
+}
+
 /* ─── Today Card ─── */
 .today-card {
   margin: 14px 20px 0; border-radius: 14px;
@@ -395,6 +416,17 @@ const WEEKLY_QUESTIONS = [
   '来週試してみたい小さな変化は？',
 ];
 
+// 再開エリア文言（責めない・状況を軽く伝える）
+const RESUME_PROMPTS = {
+  zero_day:     { msg: '今日はまだ記録がありません',     sub: '1件だけでも、ここから残せます',      cta: '今の1コマを残す' },
+  zero_evening: { msg: '今日の流れ、まだ残せていないです', sub: '今日はどんな日だったか、1件だけ置いておく？', cta: '今日を少しだけ残す' },
+  one_entry:    { msg: '今日は1件だけ残っています',       sub: 'ここまでの続き、もう1コマどう？',       cta: '続きから記録する' },
+  gap_normal:   { msg: '最後の記録から少し空いています',  sub: '今の時間帯を、1件だけ残しておく？',    cta: '今の1コマを残す' },
+  gap_evening:  { msg: 'ここまでの仕事をメモしておく？', sub: '今日の後半を、1コマだけ切り取っておく', cta: '今日の続きを残す' },
+  am_only:      { msg: '午後の記録がまだ少ないです',     sub: '午後の流れを1件だけ残しておく？',       cta: '続きから記録する' },
+  low_mood:     { msg: 'しんどめの記録のあとが空いています', sub: 'その後どうだったか、1件だけ残しておく？', cta: '続きを残す' },
+};
+
 function getSlots() {
   const slots = [];
   for (let h = 6; h <= 23; h++) {
@@ -424,6 +456,7 @@ let state = {
   _modalHighlight: false,
   _toast: null,
   _nikoSelected: null,
+  _lastUsedType: localStorage.getItem('wr-last-type') || '',
 };
 
 // ─── Helpers ───
@@ -460,6 +493,118 @@ function showToast(msg) {
   state._toast = msg;
   render();
   setTimeout(() => { state._toast = null; render(); }, 3000);
+}
+
+// ─── Resume helpers ───
+
+// 現在時刻の最近スロットを返す（入力モーダル用）
+function getNearestSlot() {
+  const now = new Date();
+  const h = now.getHours();
+  const m = now.getMinutes();
+  if (state.interval === 30) {
+    return { hour: h, minute: m < 30 ? 0 : 30 };
+  }
+  return { hour: h, minute: 0 };
+}
+
+// 最終記録のキー・時刻を返す
+function getLastEntryTime(date) {
+  const dr = state.reports[date] || {};
+  const keys = Object.keys(dr).sort((a,b) => {
+    const [ah,am] = a.split(':').map(Number); const [bh,bm] = b.split(':').map(Number);
+    return (ah*60+am)-(bh*60+bm);
+  });
+  if (keys.length === 0) return null;
+  const last = keys[keys.length - 1];
+  const [h, m] = last.split(':').map(Number);
+  return { key: last, totalMin: h * 60 + m };
+}
+
+// 再開プロンプトを判定（純関数。stateは引数で受け取る）
+// returns: { key: string, variant: 'normal'|'evening' } | null
+function getResumePrompt(date, nowHour) {
+  const dr = state.reports[date] || {};
+  const entries = Object.values(dr);
+  const count   = entries.length;
+  const isEvening = nowHour >= 17;
+  const isAfternoon = nowHour >= 13;
+  const nowMin = nowHour * 60 + new Date().getMinutes();
+  const lastTime = getLastEntryTime(date);
+
+  // 0件
+  if (count === 0 && nowHour >= 9) {
+    return { key: isEvening ? 'zero_evening' : 'zero_day', variant: isEvening ? 'evening' : 'normal' };
+  }
+
+  // 1件のみ
+  if (count === 1) {
+    const sub = lastTime ? `最後の記録: ${lastTime.key}` : '';
+    return { key: 'one_entry', variant: 'normal', sub };
+  }
+
+  // 最終記録から3h以上 + 14時以降
+  if (lastTime && isAfternoon) {
+    const gapMin = nowMin - lastTime.totalMin;
+    if (gapMin >= 180) {
+      return { key: isEvening ? 'gap_evening' : 'gap_normal', variant: isEvening ? 'evening' : 'normal',
+               sub: `最後の記録: ${lastTime.key}` };
+    }
+  }
+
+  // 午後なのに午前しか記録がない
+  if (isAfternoon) {
+    const hasPm = entries.some((_, i) => {
+      const key = Object.keys(dr)[i];
+      const h = parseInt(key.split(':')[0]);
+      return h >= 12;
+    });
+    if (!hasPm) return { key: 'am_only', variant: 'normal', sub: '午後の流れがまだ残せていません' };
+  }
+
+  // しんどめの記録が最後で2h以上更新なし（17時以降）
+  if (isEvening && lastTime) {
+    const lastEntry = dr[lastTime.key];
+    const gapMin = nowMin - lastTime.totalMin;
+    if (lastEntry?.mood != null && lastEntry.mood <= 2 && gapMin >= 120) {
+      return { key: 'low_mood', variant: 'evening', sub: `最後の記録: ${lastTime.key}` };
+    }
+  }
+
+  return null; // 表示しない
+}
+
+function renderResumeArea(date) {
+  const nowHour = new Date().getHours();
+  const prompt = getResumePrompt(date, nowHour);
+  if (!prompt) return '';
+
+  const base = RESUME_PROMPTS[prompt.key];
+  const msg  = base.msg;
+  const sub  = prompt.sub || base.sub;
+  const cta  = base.cta;
+  const isEvening = prompt.variant === 'evening';
+
+  return `<div class="resume-area${isEvening ? ' evening' : ''}">
+    <div class="resume-msg">${escapeHtml(msg)}</div>
+    <div class="resume-sub">${escapeHtml(sub)}</div>
+    <button class="resume-cta" onclick="openResumeModal()">
+      ${escapeHtml(cta)}
+    </button>
+  </div>`;
+}
+
+function openResumeModal() {
+  const { hour, minute } = getNearestSlot();
+  // 今のスロットにすでに記録がある場合は次のスロットへ
+  const key = `${hour}:${String(minute).padStart(2,'0')}`;
+  const existing = (state.reports[state.currentDate] || {})[key];
+  openModal(hour, minute);
+  // 前回カテゴリをデフォルト候補として使う（空スロットのみ）
+  if (!existing && state._lastUsedType) {
+    state._modalType = state._lastUsedType;
+    render();
+  }
 }
 
 // ─── Week helpers ───
@@ -998,8 +1143,9 @@ function renderMain() {
   const modal = state.editingHour !== null
     ? renderModal(state.editingHour, state.editingMinute, todayReports[`${state.editingHour}:${String(state.editingMinute).padStart(2,'0')}`])
     : '';
-  const toast = state._toast ? `<div class="toast">${escapeHtml(state._toast)}</div>` : '';
-  const todayCard = !state.loading && filledCount > 0 ? renderTodayCard(state.currentDate) : '';
+  const toast      = state._toast ? `<div class="toast">${escapeHtml(state._toast)}</div>` : '';
+  const todayCard  = !state.loading && filledCount > 0 ? renderTodayCard(state.currentDate) : '';
+  const resumeArea = !state.loading ? renderResumeArea(state.currentDate) : '';
 
   return `
     <div class="header">
@@ -1024,7 +1170,7 @@ function renderMain() {
         </div>
       </div>
     </div>
-    ${state.loading ? '<div class="loading">読み込み中...</div>' : `${todayCard}<div class="timeline">${timeline}</div>`}
+    ${state.loading ? '<div class="loading">読み込み中...</div>' : `${resumeArea}${todayCard}<div class="timeline">${timeline}</div>`}
     ${modal}
     ${toast}`;
 }
@@ -1269,6 +1415,9 @@ async function saveAndClose(hour, minute) {
   if (!state._modalType) return;
   const workType = state._modalType;
   const mood = state._modalMood;
+  // ラストカテゴリを保持（次回の再開モーダル初期値に使う）
+  state._lastUsedType = workType;
+  localStorage.setItem('wr-last-type', workType);
   await saveReport(state.currentDate, hour, minute, workType, state._modalMemo, mood, state._modalHighlight);
   closeModal();
   // 3件以上になったら「今日の名前」をトーストで出す（日が形になっていく演出）
