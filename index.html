@@ -240,6 +240,33 @@ textarea { font-family: inherit; }
 }
 @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
 
+/* ─── Today Card ─── */
+.today-card {
+  margin: 14px 20px 0; border-radius: 14px;
+  background: #fff; border: 1px solid #eee;
+  border-left: 4px solid var(--tone-color, #e0e0e0);
+  overflow: hidden; animation: fadeIn 0.25s ease;
+}
+.today-card-inner { padding: 14px 16px 10px; }
+.today-card-eyebrow { font-size: 11px; font-weight: 700; color: #bbb; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px; }
+.today-card-title { font-size: 18px; font-weight: 700; color: #1a1a1a; margin-bottom: 4px; letter-spacing: -0.2px; }
+.today-card-desc { font-size: 13px; color: #888; line-height: 1.5; }
+.today-card-bar { display: flex; height: 5px; gap: 2px; margin: 10px 16px 0; }
+.today-card-foot {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding: 8px 16px 10px;
+}
+.today-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 12px; color: #666; background: #F5F5F5;
+  padding: 3px 9px; border-radius: 20px; font-weight: 500;
+}
+
+/* ─── Day Title Badge (summary view) ─── */
+.day-title-badge {
+  font-size: 12px; color: #888; margin-top: 2px; font-weight: 500;
+}
+
 /* ─── Week Card ─── */
 .week-card {
   background: #fff; border-radius: 18px; margin-bottom: 16px;
@@ -648,6 +675,108 @@ function getDaySummary(date) {
   return null;
 }
 
+// ─── 今日の名前（純関数。文言は末尾優先でルールを積み上げ）───
+function getDayTitle(date) {
+  const dr = state.reports[date] || {};
+  const entries = Object.values(dr);
+  if (entries.length === 0) return null;
+
+  const counts = {};
+  const moods = [];
+  let highlights = 0, hasBreak = false;
+  entries.forEach(e => {
+    counts[e.work_type] = (counts[e.work_type] || 0) + 1;
+    if (e.mood != null) moods.push(e.mood);
+    if (e.highlight) highlights++;
+    if (e.work_type === 'break') hasBreak = true;
+  });
+
+  const avg = m => m.length > 0 ? m.reduce((a,b) => a+b, 0) / m.length : null;
+  const avgMood = avg(moods);
+  const minMood = moods.length > 0 ? Math.min(...moods) : null;
+
+  const sortedKeys = Object.keys(dr).sort((a,b) => {
+    const [ah,am] = a.split(':').map(Number); const [bh,bm] = b.split(':').map(Number);
+    return (ah*60+am)-(bh*60+bm);
+  });
+  const half = Math.ceil(sortedKeys.length / 2);
+  const earlyMoods = sortedKeys.slice(0, half).map(k => dr[k]?.mood).filter(m => m != null);
+  const lateMoods  = sortedKeys.slice(half).map(k => dr[k]?.mood).filter(m => m != null);
+  const earlyAvg = avg(earlyMoods);
+  const lateAvg  = avg(lateMoods);
+
+  const sortedTypes = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+  const topType = sortedTypes[0]?.[0];
+  const topPct  = topType ? counts[topType] / entries.length : 0;
+
+  // 優先: 気分シグナル → 気分トレンド → カテゴリ → フォールバック
+  if (highlights > 0 && avgMood && avgMood >= 3.5) return 'よかった場面のある日';
+  if (minMood !== null && minMood <= 1) return 'しんどい時間のある日';
+  if (avgMood !== null && avgMood <= 2.0) return 'なんとかつないでる日';
+  if (earlyAvg !== null && lateAvg !== null && earlyAvg - lateAvg >= 1.0) return '後半に少し重くなった日';
+  if (earlyAvg !== null && lateAvg !== null && lateAvg - earlyAvg >= 1.0) return '少し持ち直してる日';
+  if (!hasBreak && entries.length >= 5) return '詰め込みで進めた日';
+  if (topType === 'meeting' && topPct >= 0.5 && avgMood && avgMood <= 2.5) return '会議に削られた日';
+  if (topType === 'meeting' && topPct >= 0.5) return '切り替え多めの日';
+  if (topType === 'meeting') return '会議に寄った日';
+  if (topType === 'dev' && topPct >= 0.5 && avgMood && avgMood >= 3.5) return 'つくれた日';
+  if (topType === 'dev') return 'つくる日';
+  if (topType === 'research') return 'しらべる日';
+  if (topType === 'docs') return 'まとめる日';
+  if (topType === 'support') return '助けながら進めた日';
+  if (topType === 'review') return 'みなおした日';
+  if (topType === 'break') return '少しゆるめの日';
+  if (avgMood && avgMood >= 4.0) return '調子のある日';
+  return 'いろいろあった日';
+}
+
+// 今日カード（タイムライン上部に表示）
+function renderTodayCard(date) {
+  const dr = state.reports[date] || {};
+  const entries = Object.values(dr);
+  if (entries.length === 0) return '';
+
+  const title    = getDayTitle(date);
+  const oneliner = getDaySummary(date);
+
+  const counts = {};
+  const moods = [];
+  let highlights = 0;
+  entries.forEach(e => {
+    counts[e.work_type] = (counts[e.work_type]||0)+1;
+    if (e.mood != null) moods.push(e.mood);
+    if (e.highlight) highlights++;
+  });
+
+  const avgRaw = moods.length > 0 ? moods.reduce((a,b) => a+b, 0) / moods.length : null;
+  const avgEntry = avgRaw !== null ? MOOD_LEVELS.find(m => m.value === Math.round(avgRaw)) : null;
+  const tone = avgRaw === null ? '#94A3B8'
+    : avgRaw >= 3.8 ? '#10B981'
+    : avgRaw >= 3.0 ? '#60A5FA'
+    : avgRaw >= 2.3 ? '#F59E0B' : '#A78BFA';
+
+  const bar = Object.entries(counts)
+    .sort((a,b) => b[1]-a[1])
+    .map(([tid, cnt]) => {
+      const t = getType(tid);
+      return `<div style="flex:${cnt};background:${t?.color||'#ccc'};border-radius:2px"></div>`;
+    }).join('');
+
+  return `<div class="today-card" style="--tone-color:${tone}">
+    <div class="today-card-inner">
+      <div class="today-card-eyebrow">今日のきろく</div>
+      <div class="today-card-title">${title ? `「${escapeHtml(title)}」` : '記録が積み上がってる'}</div>
+      ${oneliner ? `<div class="today-card-desc">${escapeHtml(oneliner)}</div>` : ''}
+    </div>
+    <div class="today-card-bar">${bar}</div>
+    <div class="today-card-foot">
+      <span class="today-chip">📝 ${entries.length}件</span>
+      ${highlights ? `<span class="today-chip">⭐ ${highlights}件</span>` : ''}
+      ${avgEntry ? `<span class="today-chip">${avgEntry.emoji} ${avgEntry.label}</span>` : ''}
+    </div>
+  </div>`;
+}
+
 function getDayPopupSummary(date) {
   const dr = state.reports[date] || {};
   const entries = Object.values(dr);
@@ -870,6 +999,7 @@ function renderMain() {
     ? renderModal(state.editingHour, state.editingMinute, todayReports[`${state.editingHour}:${String(state.editingMinute).padStart(2,'0')}`])
     : '';
   const toast = state._toast ? `<div class="toast">${escapeHtml(state._toast)}</div>` : '';
+  const todayCard = !state.loading && filledCount > 0 ? renderTodayCard(state.currentDate) : '';
 
   return `
     <div class="header">
@@ -894,7 +1024,7 @@ function renderMain() {
         </div>
       </div>
     </div>
-    ${state.loading ? '<div class="loading">読み込み中...</div>' : `<div class="timeline">${timeline}</div>`}
+    ${state.loading ? '<div class="loading">読み込み中...</div>' : `${todayCard}<div class="timeline">${timeline}</div>`}
     ${modal}
     ${toast}`;
 }
@@ -1067,8 +1197,9 @@ function renderSummary() {
           return `<span class="category-tag" style="background:${t?.color}15;color:${t?.color}">${t?.icon} ${t?.softLabel || t?.label} ×${cnt}</span>`;
         }).join('');
 
-        const dayMood = getDayMoodEmoji(date);
+        const dayMood    = getDayMoodEmoji(date);
         const daySummary = getDaySummary(date);
+        const dayTitle   = getDayTitle(date);
         const rows = sortedKeys.map(key => {
           const e = dr[key]; const t = getType(e.work_type);
           const moodEmoji = e.mood ? MOOD_LEVELS.find(m => m.value === e.mood)?.emoji : null;
@@ -1084,7 +1215,10 @@ function renderSummary() {
 
         return `<div class="day-card">
           <div class="day-header">
-            <h3>${formatDate(date)}</h3>
+            <div>
+              <h3>${formatDate(date)}</h3>
+              ${dayTitle ? `<div class="day-title-badge">「${escapeHtml(dayTitle)}」</div>` : ''}
+            </div>
             <div style="display:flex;align-items:center;gap:8px">
               ${dayMood ? `<span style="font-size:20px" title="その日の平均気分">${dayMood}</span>` : ''}
               <span class="day-count">${total}件</span>
@@ -1137,7 +1271,13 @@ async function saveAndClose(hour, minute) {
   const mood = state._modalMood;
   await saveReport(state.currentDate, hour, minute, workType, state._modalMemo, mood, state._modalHighlight);
   closeModal();
-  showToast(getToastMessage(workType, mood));
+  // 3件以上になったら「今日の名前」をトーストで出す（日が形になっていく演出）
+  const dayCount = Object.keys(state.reports[state.currentDate] || {}).length;
+  const dayTitle = getDayTitle(state.currentDate);
+  const msg = dayTitle && dayCount >= 3
+    ? `今日は「${dayTitle}」`
+    : getToastMessage(workType, mood);
+  showToast(msg);
 }
 async function deleteAndClose(hour, minute) {
   await deleteReport(state.currentDate, hour, minute);
